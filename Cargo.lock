@@ -2397,6 +2397,7 @@ dependencies = [
 name = "particle-sim-3"
 version = "0.1.0"
 dependencies = [
+ "bitflags 2.13.1",
  "color-eyre",
  "eframe",
  "egui",

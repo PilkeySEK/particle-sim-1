@@ -1,13 +1,13 @@
 use std::{sync::Arc, time::Duration};
 
-use egui::{CentralPanel, Color32, Panel, Pos2, Rect, RichText, Slider, Vec2};
+use egui::{CentralPanel, Color32, Panel, Pos2, Rect, RichText, Slider, SliderClamping, Vec2};
 use tokio::{sync::Mutex, task::block_in_place, time::interval};
 
 use crate::{app::tps_tracker::TpsTracker, universe::Universe};
 
 mod tps_tracker;
 
-pub enum ParticleRenderingInfo {
+pub enum ObjectRenderingInfo {
     Blue { position: Vec2, size: f32 },
 }
 
@@ -76,7 +76,10 @@ impl eframe::App for App {
                 state.universe.clear();
             }
             ui.add(Slider::new(&mut state.target_tps, 1..=1000));
-            ui.add(Slider::new(&mut self.num_particles_to_spawn, 1..=100));
+            ui.add(
+                Slider::new(&mut self.num_particles_to_spawn, 1..=100)
+                    .clamping(SliderClamping::Never),
+            );
             ui.add(Slider::new(&mut state.universe.drag, 0.90..=1.0));
             ui.separator();
             ui.add(Slider::new(
@@ -104,7 +107,7 @@ impl eframe::App for App {
 
             for info in rendering_info {
                 match info {
-                    ParticleRenderingInfo::Blue { position, size } => {
+                    ObjectRenderingInfo::Blue { position, size } => {
                         painter.circle_filled(
                             {
                                 let vec2 = (position * scale)

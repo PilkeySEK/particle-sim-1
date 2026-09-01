@@ -7,7 +7,7 @@ use crate::{app::tps_tracker::TpsTracker, universe::Universe};
 
 mod tps_tracker;
 
-pub enum ParticleRenderingInfo {
+pub enum ObjectRenderingInfo {
     Blue { position: Vec2, size: f32 },
 }
 
@@ -67,9 +67,9 @@ impl eframe::App for App {
         Panel::left("controls-and-info").show(ui, |ui| {
             ui.label(RichText::new(format!("{} TPS", state.tps_tracker.get())));
             ui.label(RichText::new(format!("Objects: {}", rendering_info.len())));
-            if ui.button("Spawn random particle").clicked() {
+            if ui.button("Spawn random objects").clicked() {
                 for _ in 0..self.num_particles_to_spawn {
-                    state.universe.spawn_random_particle();
+                    state.universe.spawn_random_object();
                 }
             }
             if ui.button("Clear").clicked() {
@@ -104,7 +104,7 @@ impl eframe::App for App {
 
             for info in rendering_info {
                 match info {
-                    ParticleRenderingInfo::Blue { position, size } => {
+                    ObjectRenderingInfo::Blue { position, size } => {
                         painter.circle_filled(
                             {
                                 let vec2 = (position * scale)

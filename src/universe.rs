@@ -105,7 +105,7 @@ impl Universe {
         self.wrap_around_size
     }
 
-    pub fn spawn_particle(
+    pub fn spawn_object(
         &mut self,
         particle: Object,
         // particle: impl Particle + Send + Sync + 'static,
@@ -114,8 +114,8 @@ impl Universe {
         self.objects.push(Mutex::new(particle))
     }
 
-    pub fn spawn_random_particle(&mut self) {
-        self.spawn_particle(Object {
+    pub fn spawn_random_object(&mut self) {
+        self.spawn_object(Object {
             position: Vec2::new(
                 rand::random_range(0.0..self.size().x),
                 rand::random_range(0.0..self.size().y),

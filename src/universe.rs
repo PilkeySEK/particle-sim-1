@@ -4,6 +4,8 @@ use egui::Vec2;
 
 use crate::{app::ObjectRenderingInfo, math::distance};
 
+mod bh;
+
 const OBJECT_BASE_SIZE: f32 = 1.0;
 
 pub struct Universe {

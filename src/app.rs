@@ -147,7 +147,8 @@ impl eframe::App for App {
                 self.zoom_factor += zoom_delta;
                 */
                 if let Some(hover_pos) = response.hover_pos() {
-                    let hover_world_pos = (hover_pos - clip_rect.min) / scale / self.view.zoom();
+                    let hover_world_pos = (hover_pos - clip_rect.min) / scale / self.view.zoom()
+                        + self.view.get_offset();
                     self.view.zoom_at(hover_world_pos, zoom_delta);
                 } else {
                     self.view.zoom_at(state.universe.size() / 2.0, zoom_delta);
@@ -159,7 +160,7 @@ impl eframe::App for App {
             {
                 let mut pos = Vec2::new(pos.x, pos.y);
                 pos -= Vec2::new(clip_rect.min.x, clip_rect.min.y);
-                let universe_pos = pos / scale / self.view.zoom() + self.view.origin();
+                let universe_pos = pos / scale / self.view.zoom() + self.view.get_offset();
                 state.universe.spawn_object(Object {
                     position: universe_pos,
                     velocity: Vec2::ZERO,
@@ -183,7 +184,7 @@ impl eframe::App for App {
                         radius: size,
                     } => {
                         let circle_center =
-                            (position - self.view.origin()) * scale * self.view.zoom()
+                            (position - self.view.get_offset()) * scale * self.view.zoom()
                                 + Vec2::new(clip_rect.min.x, clip_rect.min.y);
                         if circle_center.x < clip_rect.min.x
                             || circle_center.y < clip_rect.min.y
@@ -220,7 +221,7 @@ const fn largest_possible_paint_size(available_size: Vec2, required_dimensions: 
 
 struct View {
     zoom: f32,
-    origin: Vec2,
+    camera_offset: Vec2,
 }
 
 impl View {
@@ -228,7 +229,15 @@ impl View {
     pub const MAX_ZOOM: f32 = 10.0;
 
     pub fn zoom_at(&mut self, world_pos: Vec2, delta: f32) {
-        self.zoom += delta;
+        let old_zoom = self.zoom;
+        let new_zoom = (old_zoom + delta).clamp(Self::MIN_ZOOM, Self::MAX_ZOOM);
+        if new_zoom == old_zoom {
+            return;
+        }
+
+        let zoom_ratio = old_zoom / new_zoom;
+        self.camera_offset = world_pos - (world_pos - self.camera_offset) * zoom_ratio;
+        self.zoom = new_zoom;
     }
 
     pub fn zoom_mut(&mut self) -> &mut f32 {
@@ -239,16 +248,18 @@ impl View {
         self.zoom
     }
 
-    pub fn origin(&self) -> Vec2 {
-        self.origin
+    pub fn get_offset(&self) -> Vec2 {
+        self.camera_offset
     }
 
     pub fn pan(&mut self, delta: Vec2) {
-        self.origin += delta;
+        self.camera_offset += delta;
     }
 
     pub fn clamp(&mut self, universe_size: Vec2) {
-        self.origin = self.origin.clamp(-universe_size / 2.0, universe_size / 2.0);
+        self.camera_offset = self
+            .camera_offset
+            .clamp(-universe_size / 2.0, universe_size / 2.0);
     }
 }
 
@@ -256,7 +267,7 @@ impl Default for View {
     fn default() -> Self {
         Self {
             zoom: 1.0,
-            origin: Vec2::ZERO,
+            camera_offset: Vec2::ZERO,
         }
     }
 }

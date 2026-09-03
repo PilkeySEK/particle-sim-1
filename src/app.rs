@@ -17,9 +17,6 @@ use crate::{
 
 mod tps_tracker;
 
-const MIN_ZOOM: f32 = 1.0;
-const MAX_ZOOM: f32 = 10.0;
-
 pub enum ObjectRenderingInfo {
     Blue { position: Vec2, radius: f32 },
 }
@@ -27,8 +24,9 @@ pub enum ObjectRenderingInfo {
 pub struct App {
     state: Arc<tokio::sync::Mutex<AppState>>,
     num_particles_to_spawn: u64,
-    zoom_factor: f32,
-    view_start: Vec2,
+    // zoom_factor: f32,
+    // view_start: Vec2,
+    view: View,
 }
 
 struct AppState {
@@ -44,8 +42,9 @@ impl App {
         Self {
             state,
             num_particles_to_spawn: 1,
-            zoom_factor: 1.0,
-            view_start: Vec2::ZERO,
+            // zoom_factor: 1.0,
+            // view_start: Vec2::ZERO,
+            view: View::default(),
         }
     }
 }
@@ -114,15 +113,21 @@ impl eframe::App for App {
             let scroll_delta = ui.input(|i| i.smooth_scroll_delta());
             ui.allocate_ui_with_layout(Vec2::ZERO, Layout::left_to_right(Align::Min), |ui| {
                 if ui.button(" + ").clicked() {
-                    self.zoom_factor += 0.1;
+                    self.view.zoom_at(state.universe.size() / 2.0, 0.1);
+                    // self.zoom_factor += 0.1;
                 }
                 if ui.button(" - ").clicked() {
-                    self.zoom_factor -= 0.1;
+                    self.view.zoom_at(state.universe.size() / 2.0, -0.1);
+                    // self.zoom_factor -= 0.1;
                 }
-                ui.add(Slider::new(&mut self.zoom_factor, MIN_ZOOM..=MAX_ZOOM));
+                ui.add(Slider::new(
+                    self.view.zoom_mut(),
+                    View::MIN_ZOOM..=View::MAX_ZOOM,
+                ));
                 if ui.button("R").on_hover_text("Reset Zoom").clicked() {
-                    self.zoom_factor = 1.0;
-                    self.view_start = Vec2::ZERO;
+                    // self.zoom_factor = 1.0;
+                    // self.view_start = Vec2::ZERO;
+                    self.view = View::default();
                 }
             });
             let (response, painter) =
@@ -134,25 +139,27 @@ impl eframe::App for App {
             let scale = largest_size / universe_size;
             {
                 let zoom_delta = scroll_delta.y * 0.01;
+                /*
                 if let Some(hover_pos) = response.hover_pos() {
                     let hover_world_pos = (hover_pos - clip_rect.min) / scale / self.zoom_factor;
-                    let edge_distance = hover_world_pos - self.view_start;
-                    // ???
-                    let _ = edge_distance;
-                    // self.view_start += view_offset;
+
                 }
                 self.zoom_factor += zoom_delta;
+                */
+                if let Some(hover_pos) = response.hover_pos() {
+                    let hover_world_pos = (hover_pos - clip_rect.min) / scale / self.view.zoom();
+                    self.view.zoom_at(hover_world_pos, zoom_delta);
+                } else {
+                    self.view.zoom_at(state.universe.size() / 2.0, zoom_delta);
+                }
             }
-            self.view_start = self
-                .view_start
-                .clamp(-state.universe.size() / 2.0, state.universe.size() / 2.0);
 
             if response.clicked()
                 && let Some(pos) = response.interact_pointer_pos()
             {
                 let mut pos = Vec2::new(pos.x, pos.y);
                 pos -= Vec2::new(clip_rect.min.x, clip_rect.min.y);
-                let universe_pos = pos / scale / self.zoom_factor + self.view_start;
+                let universe_pos = pos / scale / self.view.zoom() + self.view.origin();
                 state.universe.spawn_object(Object {
                     position: universe_pos,
                     velocity: Vec2::ZERO,
@@ -160,10 +167,8 @@ impl eframe::App for App {
                     flags: ObjectFlags::empty(),
                 });
             }
-            {
-                let view_delta = response.drag_delta() / scale / self.zoom_factor;
-                self.view_start -= view_delta;
-            }
+            self.view
+                .pan(-(response.drag_delta() / scale / self.view.zoom()));
 
             painter.rect_filled(
                 Rect::from_min_size(clip_rect.min, largest_size),
@@ -177,8 +182,9 @@ impl eframe::App for App {
                         position,
                         radius: size,
                     } => {
-                        let circle_center = (position - self.view_start) * scale * self.zoom_factor
-                            + Vec2::new(clip_rect.min.x, clip_rect.min.y);
+                        let circle_center =
+                            (position - self.view.origin()) * scale * self.view.zoom()
+                                + Vec2::new(clip_rect.min.x, clip_rect.min.y);
                         if circle_center.x < clip_rect.min.x
                             || circle_center.y < clip_rect.min.y
                             || circle_center.x > largest_size.x + clip_rect.min.x
@@ -189,7 +195,7 @@ impl eframe::App for App {
                         }
                         painter.circle_filled(
                             Pos2::new(circle_center.x, circle_center.y),
-                            size * scale.x * self.zoom_factor,
+                            size * scale.x * self.view.zoom(),
                             Color32::BLUE,
                         );
                     }
@@ -209,5 +215,48 @@ const fn largest_possible_paint_size(available_size: Vec2, required_dimensions: 
         Vec2::new(available_size.y * target_aspect, available_size.y)
     } else {
         Vec2::new(available_size.x, available_size.x / target_aspect)
+    }
+}
+
+struct View {
+    zoom: f32,
+    origin: Vec2,
+}
+
+impl View {
+    pub const MIN_ZOOM: f32 = 1.0;
+    pub const MAX_ZOOM: f32 = 10.0;
+
+    pub fn zoom_at(&mut self, world_pos: Vec2, delta: f32) {
+        self.zoom += delta;
+    }
+
+    pub fn zoom_mut(&mut self) -> &mut f32 {
+        &mut self.zoom
+    }
+
+    pub fn zoom(&self) -> f32 {
+        self.zoom
+    }
+
+    pub fn origin(&self) -> Vec2 {
+        self.origin
+    }
+
+    pub fn pan(&mut self, delta: Vec2) {
+        self.origin += delta;
+    }
+
+    pub fn clamp(&mut self, universe_size: Vec2) {
+        self.origin = self.origin.clamp(-universe_size / 2.0, universe_size / 2.0);
+    }
+}
+
+impl Default for View {
+    fn default() -> Self {
+        Self {
+            zoom: 1.0,
+            origin: Vec2::ZERO,
+        }
     }
 }

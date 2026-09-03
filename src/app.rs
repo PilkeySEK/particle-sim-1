@@ -4,7 +4,11 @@ use egui::{
     Align, CentralPanel, Color32, Layout, Panel, Pos2, Rect, RichText, Sense, Slider,
     SliderClamping, Vec2,
 };
-use tokio::{sync::Mutex, task::block_in_place, time::interval};
+use tokio::{
+    sync::Mutex,
+    task::block_in_place,
+    time::{MissedTickBehavior, interval},
+};
 
 use crate::{
     app::tps_tracker::TpsTracker,
@@ -17,7 +21,7 @@ const MIN_ZOOM: f32 = 1.0;
 const MAX_ZOOM: f32 = 10.0;
 
 pub enum ObjectRenderingInfo {
-    Blue { position: Vec2, size: f32 },
+    Blue { position: Vec2, radius: f32 },
 }
 
 pub struct App {
@@ -60,6 +64,7 @@ async fn tick_task(state: Arc<Mutex<AppState>>) {
     let mut tps_interval = interval(Duration::from_secs_f64(
         1.0 / state.lock().await.target_tps as f64,
     ));
+    tps_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
     loop {
         tps_interval.tick().await;
         let mut state = state.lock().await;
@@ -67,6 +72,7 @@ async fn tick_task(state: Arc<Mutex<AppState>>) {
         let new_period = Duration::from_secs_f64(1.0 / state.target_tps as f64);
         if new_period != tps_interval.period() {
             tps_interval = interval(new_period);
+            tps_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
         }
         state.universe.tick().await;
         state.tps_tracker.tick();
@@ -167,7 +173,10 @@ impl eframe::App for App {
 
             for info in rendering_info {
                 match info {
-                    ObjectRenderingInfo::Blue { position, size } => {
+                    ObjectRenderingInfo::Blue {
+                        position,
+                        radius: size,
+                    } => {
                         let circle_center = (position - self.view_start) * scale * self.zoom_factor
                             + Vec2::new(clip_rect.min.x, clip_rect.min.y);
                         if circle_center.x < clip_rect.min.x

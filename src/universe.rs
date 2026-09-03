@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::{f32::consts::PI, sync::Mutex};
 
 use bitflags::bitflags;
 use egui::Vec2;
@@ -6,8 +6,6 @@ use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIter
 use tokio::sync::mpsc::unbounded_channel;
 
 use crate::{app::ObjectRenderingInfo, math::distance};
-
-const PARTICLE_BASE_SIZE: f32 = 1.0;
 
 pub struct Universe {
     objects: Vec<std::sync::Mutex<Object>>,
@@ -21,6 +19,12 @@ pub struct Object {
     pub velocity: Vec2,
     pub mass: f32,
     pub flags: ObjectFlags,
+}
+
+impl Object {
+    pub fn radius(&self) -> f32 {
+        (self.mass / PI).sqrt()
+    }
 }
 
 bitflags! {
@@ -60,7 +64,7 @@ impl Universe {
                     let force = obj.gravitational_force(&other_obj);
                     obj.velocity += force;
                     let distance = distance(obj.position, other_obj.position);
-                    if distance < obj.mass * PARTICLE_BASE_SIZE {
+                    if distance < obj.radius() * 1.25 {
                         if !obj.flags.contains(ObjectFlags::REMOVE_NEXT) {
                             other_obj.flags |= ObjectFlags::REMOVE_NEXT;
                             to_merge_tx
@@ -91,11 +95,11 @@ impl Universe {
     pub fn get_rendering_info(&self) -> Vec<ObjectRenderingInfo> {
         self.objects
             .iter()
-            .map(|particle| {
-                let particle = particle.lock().unwrap();
+            .map(|object| {
+                let object = object.lock().unwrap();
                 ObjectRenderingInfo::Blue {
-                    position: particle.position,
-                    size: PARTICLE_BASE_SIZE * particle.mass,
+                    position: object.position,
+                    radius: object.radius(),
                 }
             })
             .collect()
@@ -144,7 +148,8 @@ impl Default for Universe {
 impl Object {
     // this is the only function that has been mostly written by claude, the rest is mine
     fn gravitational_force(&self, other: &Object) -> Vec2 {
-        const G: f32 = 1.0;
+        const G: f32 = 0.1;
+        const FORCE_LIMIT: Vec2 = Vec2::new(100.0, 100.0);
 
         let delta = other.position - self.position;
         let distance_sq = delta.x * delta.x + delta.y * delta.y;
@@ -156,6 +161,6 @@ impl Object {
         let force_magnitude = G * (self.mass * other.mass) / distance_sq;
         let direction = delta * (1.0 / distance);
 
-        direction * force_magnitude
+        (direction * force_magnitude).clamp(-FORCE_LIMIT, FORCE_LIMIT)
     }
 }

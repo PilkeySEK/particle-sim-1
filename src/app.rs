@@ -100,14 +100,14 @@ impl eframe::App for App {
             );
             ui.add(Slider::new(&mut state.universe.drag, 0.90..=1.0));
             ui.separator();
-            ui.add(Slider::new(
-                &mut state.universe.wrap_around_size.x,
-                100.0..=2000.0,
-            ));
-            ui.add(Slider::new(
-                &mut state.universe.wrap_around_size.y,
-                100.0..=2000.0,
-            ));
+            ui.add(
+                Slider::new(&mut state.universe.wrap_around_size.x, 100.0..=2000.0)
+                    .clamping(SliderClamping::Never),
+            );
+            ui.add(
+                Slider::new(&mut state.universe.wrap_around_size.y, 100.0..=2000.0)
+                    .clamping(SliderClamping::Never),
+            );
         });
         CentralPanel::default().show(ui, |ui| {
             let scroll_delta = ui.input(|i| i.smooth_scroll_delta());

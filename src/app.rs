@@ -3,6 +3,7 @@ use std::{sync::Arc, time::Duration};
 use egui::{
     Align, CentralPanel, Color32, Layout, Panel, Pos2, Rect, RichText, Sense, Slider,
     SliderClamping, Vec2,
+    color_picker::{Alpha, color_picker_color32},
 };
 use tokio::{
     sync::Mutex,
@@ -18,7 +19,7 @@ use crate::{
 mod tps_tracker;
 
 pub enum ObjectRenderingInfo {
-    Blue { position: Vec2, radius: f32 },
+    Object { position: Vec2, radius: f32 },
 }
 
 pub struct App {
@@ -27,6 +28,7 @@ pub struct App {
     // zoom_factor: f32,
     // view_start: Vec2,
     view: View,
+    object_color: Color32,
 }
 
 struct AppState {
@@ -45,6 +47,7 @@ impl App {
             // zoom_factor: 1.0,
             // view_start: Vec2::ZERO,
             view: View::default(),
+            object_color: Color32::WHITE,
         }
     }
 }
@@ -108,6 +111,9 @@ impl eframe::App for App {
                 Slider::new(&mut state.universe.wrap_around_size.y, 100.0..=2000.0)
                     .clamping(SliderClamping::Never),
             );
+            ui.collapsing("Object color", |ui| {
+                color_picker_color32(ui, &mut self.object_color, Alpha::Opaque);
+            });
         });
         CentralPanel::default().show(ui, |ui| {
             let scroll_delta = ui.input(|i| i.smooth_scroll_delta());
@@ -179,7 +185,7 @@ impl eframe::App for App {
 
             for info in rendering_info {
                 match info {
-                    ObjectRenderingInfo::Blue {
+                    ObjectRenderingInfo::Object {
                         position,
                         radius: size,
                     } => {
@@ -197,7 +203,7 @@ impl eframe::App for App {
                         painter.circle_filled(
                             Pos2::new(circle_center.x, circle_center.y),
                             size * scale.x * self.view.zoom(),
-                            Color32::BLUE,
+                            self.object_color,
                         );
                     }
                 }

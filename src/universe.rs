@@ -97,7 +97,7 @@ impl Universe {
             .iter()
             .map(|object| {
                 let object = object.lock().unwrap();
-                ObjectRenderingInfo::Blue {
+                ObjectRenderingInfo::Object {
                     position: object.position,
                     radius: object.radius(),
                 }
@@ -148,7 +148,7 @@ impl Default for Universe {
 impl Object {
     // this is the only function that has been mostly written by claude, the rest is mine
     fn gravitational_force(&self, other: &Object) -> Vec2 {
-        const G: f32 = 0.1;
+        const G: f32 = 0.5;
         const FORCE_LIMIT: Vec2 = Vec2::new(100.0, 100.0);
 
         let delta = other.position - self.position;

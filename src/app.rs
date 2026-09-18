@@ -29,6 +29,7 @@ pub struct App {
     // view_start: Vec2,
     view: View,
     object_color: Color32,
+    obj_spawn_vel: f32,
 }
 
 struct AppState {
@@ -48,6 +49,7 @@ impl App {
             // view_start: Vec2::ZERO,
             view: View::default(),
             object_color: Color32::WHITE,
+            obj_spawn_vel: 1.0,
         }
     }
 }
@@ -114,6 +116,22 @@ impl eframe::App for App {
             ui.collapsing("Object color", |ui| {
                 color_picker_color32(ui, &mut self.object_color, Alpha::Opaque);
             });
+            ui.add(Slider::new(&mut self.obj_spawn_vel, 0.0..=1.0));
+            if ui.button("test").clicked() {
+                let universe_size = state.universe.size();
+                state.universe.spawn_object(Object {
+                    position: universe_size / 2.0,
+                    velocity: Vec2::ZERO,
+                    mass: 5.0,
+                    flags: ObjectFlags::FIX,
+                });
+                state.universe.spawn_object(Object {
+                    position: universe_size / 2.0 + Vec2::new(0.0, 20.0),
+                    velocity: Vec2::new(self.obj_spawn_vel, 0.0),
+                    mass: 1.0,
+                    flags: ObjectFlags::empty(),
+                });
+            }
         });
         CentralPanel::default().show(ui, |ui| {
             let scroll_delta = ui.input(|i| i.smooth_scroll_delta());

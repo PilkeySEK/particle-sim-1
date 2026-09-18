@@ -31,6 +31,7 @@ bitflags! {
     #[derive(Copy, Clone)]
     pub struct ObjectFlags: u8 {
         const REMOVE_NEXT = 1 << 0;
+        const FIX = 1 << 1;
     }
 }
 
@@ -45,7 +46,9 @@ impl Universe {
                 let obj_guard = obj_mutex.lock().unwrap();
                 let mut obj = obj_guard.clone();
                 drop(obj_guard);
-                obj.position = obj.position + obj.velocity;
+                if !obj.flags.contains(ObjectFlags::FIX) {
+                    obj.position = obj.position + obj.velocity;
+                }
                 obj.position.x %= self.wrap_around_size.x;
                 if obj.position.x < 0.0 {
                     obj.position.x = self.size().x - obj.position.x;
@@ -140,7 +143,7 @@ impl Default for Universe {
         Self {
             objects: Vec::new(),
             wrap_around_size: Vec2::new(1000.0, 1000.0),
-            drag: 0.999,
+            drag: 1.0, //0.999,
         }
     }
 }

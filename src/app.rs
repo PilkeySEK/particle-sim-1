@@ -13,6 +13,7 @@ use tokio::{
 
 use crate::{
     app::tps_tracker::TpsTracker,
+    math::distance,
     universe::{Object, ObjectFlags, Universe},
 };
 
@@ -29,13 +30,17 @@ pub struct App {
     // view_start: Vec2,
     view: View,
     object_color: Color32,
+    path_color: Color32,
     obj_spawn_vel: f32,
+    obj_fix: bool,
 }
 
 struct AppState {
     universe: Universe,
     target_tps: u64,
     tps_tracker: TpsTracker,
+    paths: Vec<Vec2>,
+    paths_enabled: bool,
 }
 
 impl App {
@@ -49,7 +54,9 @@ impl App {
             // view_start: Vec2::ZERO,
             view: View::default(),
             object_color: Color32::WHITE,
+            path_color: Color32::GRAY,
             obj_spawn_vel: 1.0,
+            obj_fix: true,
         }
     }
 }
@@ -60,6 +67,8 @@ impl Default for AppState {
             universe: Universe::default(),
             target_tps: 100,
             tps_tracker: TpsTracker::new(),
+            paths: Vec::new(),
+            paths_enabled: false,
         }
     }
 }
@@ -80,6 +89,14 @@ async fn tick_task(state: Arc<Mutex<AppState>>) {
         }
         state.universe.tick().await;
         state.tps_tracker.tick();
+
+        if state.paths_enabled {
+            let mut path_positions = Vec::new();
+            for obj in &state.universe.objects {
+                path_positions.push(obj.lock().unwrap().position);
+            }
+            state.paths.append(&mut path_positions);
+        }
     }
 }
 
@@ -97,6 +114,7 @@ impl eframe::App for App {
             }
             if ui.button("Clear").clicked() {
                 state.universe.clear();
+                state.paths = Vec::new();
             }
             ui.add(Slider::new(&mut state.target_tps, 1..=1000));
             ui.add(
@@ -116,14 +134,22 @@ impl eframe::App for App {
             ui.collapsing("Object color", |ui| {
                 color_picker_color32(ui, &mut self.object_color, Alpha::Opaque);
             });
-            ui.add(Slider::new(&mut self.obj_spawn_vel, 0.0..=1.0));
+            ui.collapsing("Path color", |ui| {
+                color_picker_color32(ui, &mut self.path_color, Alpha::Opaque);
+            });
+            ui.add(Slider::new(&mut self.obj_spawn_vel, 0.0..=1.0).max_decimals(10));
+            ui.checkbox(&mut self.obj_fix, "Fix?");
             if ui.button("test").clicked() {
                 let universe_size = state.universe.size();
                 state.universe.spawn_object(Object {
                     position: universe_size / 2.0,
                     velocity: Vec2::ZERO,
                     mass: 5.0,
-                    flags: ObjectFlags::FIX,
+                    flags: if self.obj_fix {
+                        ObjectFlags::FIX
+                    } else {
+                        ObjectFlags::empty()
+                    },
                 });
                 state.universe.spawn_object(Object {
                     position: universe_size / 2.0 + Vec2::new(0.0, 20.0),
@@ -132,6 +158,18 @@ impl eframe::App for App {
                     flags: ObjectFlags::empty(),
                 });
             }
+            let distance = {
+                if state.universe.objects.len() < 2 {
+                    0.0
+                } else {
+                    distance(
+                        state.universe.objects[0].lock().unwrap().position,
+                        state.universe.objects[1].lock().unwrap().position,
+                    )
+                }
+            };
+            ui.label(RichText::new(distance.to_string()));
+            ui.checkbox(&mut state.paths_enabled, "Paths?");
         });
         CentralPanel::default().show(ui, |ui| {
             let scroll_delta = ui.input(|i| i.smooth_scroll_delta());
@@ -200,6 +238,28 @@ impl eframe::App for App {
                 0,
                 Color32::BLACK,
             );
+
+            if state.paths_enabled {
+                for &pos in &state.paths {
+                    let circle_center = (pos - self.view.get_offset()) * scale * self.view.zoom()
+                        + Vec2::new(clip_rect.min.x, clip_rect.min.y);
+                    if circle_center.x < clip_rect.min.x
+                        || circle_center.y < clip_rect.min.y
+                        || circle_center.x > largest_size.x + clip_rect.min.x
+                        || circle_center.y > largest_size.y + clip_rect.min.y
+                    {
+                        // Don't draw if it's not in the view
+                        continue;
+                    }
+                    painter.circle_filled(
+                        Pos2::new(circle_center.x, circle_center.y),
+                        0.25 * scale.x * self.view.zoom(),
+                        self.path_color,
+                    );
+                }
+            } else {
+                state.paths = Vec::new();
+            }
 
             for info in rendering_info {
                 match info {

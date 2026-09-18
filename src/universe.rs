@@ -8,7 +8,7 @@ use tokio::sync::mpsc::unbounded_channel;
 use crate::{app::ObjectRenderingInfo, math::distance};
 
 pub struct Universe {
-    objects: Vec<std::sync::Mutex<Object>>,
+    pub objects: Vec<std::sync::Mutex<Object>>,
     pub wrap_around_size: Vec2,
     pub drag: f32,
 }

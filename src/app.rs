@@ -262,11 +262,13 @@ impl View {
         self.camera_offset += delta;
     }
 
+    /*
     pub fn clamp(&mut self, universe_size: Vec2) {
         self.camera_offset = self
             .camera_offset
             .clamp(-universe_size / 2.0, universe_size / 2.0);
     }
+    */
 }
 
 impl Default for View {

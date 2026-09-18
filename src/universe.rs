@@ -1,4 +1,4 @@
-use std::{f32::consts::PI, sync::Mutex};
+use std::f32::consts::PI;
 
 use bitflags::bitflags;
 use egui::Vec2;
@@ -8,7 +8,7 @@ use tokio::sync::mpsc::unbounded_channel;
 use crate::{app::ObjectRenderingInfo, math::distance};
 
 pub struct Universe {
-    objects: Vec<std::sync::Mutex<Object>>,
+    objects: Vec<Object>, // Vec<std::sync::Mutex<Object>>,
     pub wrap_around_size: Vec2,
     pub drag: f32,
 }
@@ -36,55 +36,97 @@ bitflags! {
 
 impl Universe {
     pub async fn tick(&mut self) {
+        struct ObjectChange {
+            /// The index of the object
+            index: usize,
+            /// Add this velocity
+            velocity: Vec2,
+            /// Add this position
+            position: Vec2,
+            /// OR these flags
+            flags: ObjectFlags,
+            /// Add this mass
+            mass: f32,
+        }
+        #[expect(non_local_definitions)]
+        impl Object {
+            fn diff(&self, other: &Object, index: usize) -> ObjectChange {
+                ObjectChange {
+                    index,
+                    velocity: other.velocity - self.velocity,
+                    position: other.position - self.position,
+                    flags: other.flags.difference(other.flags),
+                    mass: self.mass - other.mass,
+                }
+            }
+        }
+
         // let mut to_remove = Vec::new();
-        let (to_merge_tx, mut to_merge_rx) = unbounded_channel();
-        self.objects
-            .par_iter()
-            .enumerate()
-            .for_each(|(i, obj_mutex)| {
-                let obj_guard = obj_mutex.lock().unwrap();
-                let mut obj = obj_guard.clone();
-                drop(obj_guard);
-                obj.position = obj.position + obj.velocity;
-                obj.position.x %= self.wrap_around_size.x;
-                if obj.position.x < 0.0 {
-                    obj.position.x = self.size().x - obj.position.x;
+        // let (to_merge_tx, mut to_merge_rx) = unbounded_channel();
+        let (obj_changes_tx, mut obj_changes_rx) = unbounded_channel();
+        let changes = &obj_changes_tx;
+        self.objects.par_iter().enumerate().for_each(|(i, obj)| {
+            let original_obj = obj;
+            let mut obj = *obj;
+            obj.position = obj.position + obj.velocity;
+            obj.position.x %= self.wrap_around_size.x;
+            if obj.position.x < 0.0 {
+                obj.position.x = self.size().x - obj.position.x;
+            }
+            obj.position.y %= self.wrap_around_size.y;
+            if obj.position.y < 0.0 {
+                obj.position.y = self.size().y - obj.position.y;
+            }
+            for (j, other_obj) in self.objects.iter().enumerate() {
+                if i == j {
+                    continue;
                 }
-                obj.position.y %= self.wrap_around_size.y;
-                if obj.position.y < 0.0 {
-                    obj.position.y = self.size().y - obj.position.y;
-                }
-                for (j, other_obj_mutex) in self.objects.iter().enumerate() {
-                    if i == j {
-                        continue;
+                let original_obj = other_obj;
+                let mut other_obj = *other_obj;
+                let force = obj.gravitational_force(&other_obj);
+                obj.velocity += force;
+                let distance = distance(obj.position, other_obj.position);
+                if distance < obj.radius() * 1.25 {
+                    if !obj.flags.contains(ObjectFlags::REMOVE_NEXT) {
+                        other_obj.flags |= ObjectFlags::REMOVE_NEXT;
+                        changes
+                            .send(ObjectChange {
+                                index: i,
+                                velocity: other_obj.velocity,
+                                position: Vec2::ZERO,
+                                flags: ObjectFlags::REMOVE_NEXT,
+                                mass: other_obj.mass,
+                            })
+                            .unwrap();
+                        /*to_merge_tx
+                        .send((i, other_obj.mass, other_obj.velocity))
+                        .unwrap();*/
                     }
-                    let other_obj_guard = other_obj_mutex.lock().unwrap();
-                    let mut other_obj = other_obj_guard.clone();
-                    drop(other_obj_guard);
-                    let force = obj.gravitational_force(&other_obj);
-                    obj.velocity += force;
-                    let distance = distance(obj.position, other_obj.position);
-                    if distance < obj.radius() * 1.25 {
-                        if !obj.flags.contains(ObjectFlags::REMOVE_NEXT) {
-                            other_obj.flags |= ObjectFlags::REMOVE_NEXT;
-                            to_merge_tx
-                                .send((i, other_obj.mass, other_obj.velocity))
-                                .unwrap();
-                        }
-                    }
-                    *other_obj_mutex.lock().unwrap() = other_obj;
                 }
-                obj.velocity *= self.drag;
-                *obj_mutex.lock().unwrap() = obj;
-            });
-        drop(to_merge_tx);
-        while let Some((i, mass, velocity)) = to_merge_rx.recv().await {
+                changes.send(original_obj.diff(&other_obj, j)).unwrap();
+                // *other_obj_mutex.lock().unwrap() = other_obj;
+            }
+            obj.velocity *= self.drag;
+
+            changes.send(original_obj.diff(&obj, i)).unwrap();
+            // *obj_mutex.lock().unwrap() = obj;
+        });
+        // drop(to_merge_tx);
+        /*while let Some((i, mass, velocity)) = to_merge_rx.recv().await {
             let mut target = self.objects[i].lock().unwrap();
             target.mass += mass;
             target.velocity = target.velocity + velocity * (mass / target.mass);
+        }*/
+        drop(obj_changes_tx);
+        while let Some(changes) = obj_changes_rx.recv().await {
+            let obj = &mut self.objects[changes.index];
+            obj.velocity += changes.velocity;
+            obj.position += changes.position;
+            obj.mass += changes.mass;
+            obj.flags |= changes.flags;
         }
         self.objects
-            .retain(|obj| !obj.lock().unwrap().flags.contains(ObjectFlags::REMOVE_NEXT));
+            .retain(|obj| !obj.flags.contains(ObjectFlags::REMOVE_NEXT));
         // to_remove.sort();
         // to_remove.reverse();
         // for i in to_remove {
@@ -95,12 +137,9 @@ impl Universe {
     pub fn get_rendering_info(&self) -> Vec<ObjectRenderingInfo> {
         self.objects
             .iter()
-            .map(|object| {
-                let object = object.lock().unwrap();
-                ObjectRenderingInfo::Object {
-                    position: object.position,
-                    radius: object.radius(),
-                }
+            .map(|object| ObjectRenderingInfo::Object {
+                position: object.position,
+                radius: object.radius(),
             })
             .collect()
     }
@@ -111,11 +150,11 @@ impl Universe {
 
     pub fn spawn_object(
         &mut self,
-        particle: Object,
+        object: Object,
         // particle: impl Particle + Send + Sync + 'static,
     ) {
         // self.particles.push((meta, Box::new(particle)));
-        self.objects.push(Mutex::new(particle))
+        self.objects.push(object)
     }
 
     pub fn spawn_random_object(&mut self) {

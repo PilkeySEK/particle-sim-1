@@ -5,6 +5,7 @@ use crate::app::App;
 mod app;
 mod math;
 mod universe;
+mod util;
 
 #[tokio::main]
 async fn main() -> color_eyre::Result {

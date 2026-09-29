@@ -5,7 +5,7 @@ use egui::Vec2;
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use tokio::sync::mpsc::unbounded_channel;
 
-use crate::{app::ObjectRenderingInfo, math::distance};
+use crate::{app::ObjectRenderingInfo, math::distance, util::Immutable};
 
 pub struct Universe {
     pub objects: Vec<std::sync::Mutex<Object>>,
@@ -14,16 +14,41 @@ pub struct Universe {
 }
 
 #[derive(Copy, Clone)]
+pub enum ObjectKind {
+    Fixed { pos: Immutable<Vec2> },
+    NotFixed { pos: Vec2, remove_next: bool },
+}
+
+#[derive(Copy, Clone)]
 pub struct Object {
-    pub position: Vec2,
+    // /// `Immutable` if the object is fixed (cannot be moved).
+    // pub position: Either<Vec2, Immutable<Vec2>>,
+    pub kind: ObjectKind,
     pub velocity: Vec2,
     pub mass: f32,
-    pub flags: ObjectFlags,
+    // pub flags: ObjectFlags,
 }
 
 impl Object {
     pub fn radius(&self) -> f32 {
         (self.mass / PI).sqrt()
+    }
+
+    pub fn pos(&self) -> Vec2 {
+        match self.kind {
+            ObjectKind::Fixed { pos } => *pos,
+            ObjectKind::NotFixed { pos, .. } => pos,
+        }
+    }
+
+    pub fn remove_next(&self) -> bool {
+        matches!(
+            self.kind,
+            ObjectKind::NotFixed {
+                remove_next: true,
+                ..
+            }
+        )
     }
 }
 
@@ -31,7 +56,6 @@ bitflags! {
     #[derive(Copy, Clone)]
     pub struct ObjectFlags: u8 {
         const REMOVE_NEXT = 1 << 0;
-        const FIX = 1 << 1;
     }
 }
 
@@ -46,16 +70,18 @@ impl Universe {
                 let obj_guard = obj_mutex.lock().unwrap();
                 let mut obj = obj_guard.clone();
                 drop(obj_guard);
-                if !obj.flags.contains(ObjectFlags::FIX) {
-                    obj.position = obj.position + obj.velocity;
+                if let ObjectKind::NotFixed { pos, .. } = &mut obj.kind {
+                    *pos = *pos + obj.velocity;
                 }
-                obj.position.x %= self.wrap_around_size.x;
-                if obj.position.x < 0.0 {
-                    obj.position.x = self.size().x - obj.position.x;
-                }
-                obj.position.y %= self.wrap_around_size.y;
-                if obj.position.y < 0.0 {
-                    obj.position.y = self.size().y - obj.position.y;
+                if let ObjectKind::NotFixed { pos, .. } = &mut obj.kind {
+                    pos.x %= self.wrap_around_size.x;
+                    if pos.x < 0.0 {
+                        pos.x = self.size().x - pos.x;
+                    }
+                    pos.y %= self.wrap_around_size.y;
+                    if pos.y < 0.0 {
+                        pos.y = self.size().y - pos.y;
+                    }
                 }
                 for (j, other_obj_mutex) in self.objects.iter().enumerate() {
                     if i == j {
@@ -66,13 +92,66 @@ impl Universe {
                     drop(other_obj_guard);
                     let force = obj.gravitational_force(&other_obj);
                     obj.velocity += force;
-                    let distance = distance(obj.position, other_obj.position);
+                    let distance = distance(other_obj.pos(), obj.pos());
                     if distance < obj.radius() * 1.25 {
-                        if !obj.flags.contains(ObjectFlags::REMOVE_NEXT) {
-                            other_obj.flags |= ObjectFlags::REMOVE_NEXT;
-                            to_merge_tx
-                                .send((i, other_obj.mass, other_obj.velocity))
-                                .unwrap();
+                        match (&mut obj.kind, &mut other_obj.kind) {
+                            (ObjectKind::Fixed { .. }, ObjectKind::Fixed { .. }) => {}
+                            (
+                                ObjectKind::NotFixed {
+                                    remove_next: remove_next_1,
+                                    ..
+                                },
+                                ObjectKind::NotFixed {
+                                    remove_next: remove_next_2,
+                                    ..
+                                },
+                            ) => {
+                                if !*remove_next_1 && !*remove_next_2 {
+                                    *remove_next_2 = true;
+                                    to_merge_tx
+                                        .send((i, other_obj.mass, other_obj.velocity))
+                                        .unwrap();
+                                }
+                            }
+                            (
+                                ObjectKind::Fixed { .. },
+                                ObjectKind::NotFixed { remove_next, .. },
+                            ) => {
+                                if !*remove_next {
+                                    *remove_next = true;
+                                    to_merge_tx
+                                        .send((i, other_obj.mass, other_obj.velocity))
+                                        .unwrap();
+                                }
+                            }
+                            (
+                                ObjectKind::NotFixed { remove_next, .. },
+                                ObjectKind::Fixed { .. },
+                            ) => {
+                                if !*remove_next {
+                                    *remove_next = true;
+                                    to_merge_tx.send((j, obj.mass, obj.velocity)).unwrap();
+                                }
+                            } /*
+                              (true, ObjectKind::NotFixed { .. }) => {}
+                              (_, false) => {
+                                  obj.flags &= !ObjectFlags::REMOVE_NEXT;
+                                  if other_obj.position.is_left() {
+                                      other_obj.flags |= ObjectFlags::REMOVE_NEXT;
+
+                                      to_merge_tx
+                                          .send((i, other_obj.mass, other_obj.velocity))
+                                          .unwrap();
+                                  }
+                              }
+                              (false, true) => {
+                                  if !other_obj.flags.contains(ObjectFlags::REMOVE_NEXT) {
+                                      obj.flags |= ObjectFlags::REMOVE_NEXT;
+
+                                      to_merge_tx.send((i, other_obj.mass, other_obj.velocity)).unwrap();
+                                  }
+                              }
+                              */
                         }
                     }
                     *other_obj_mutex.lock().unwrap() = other_obj;
@@ -82,12 +161,13 @@ impl Universe {
             });
         drop(to_merge_tx);
         while let Some((i, mass, velocity)) = to_merge_rx.recv().await {
+            tracing::info!("merging");
             let mut target = self.objects[i].lock().unwrap();
             target.mass += mass;
             target.velocity = target.velocity + velocity * (mass / target.mass);
         }
         self.objects
-            .retain(|obj| !obj.lock().unwrap().flags.contains(ObjectFlags::REMOVE_NEXT));
+            .retain(|obj| !obj.lock().unwrap().remove_next());
         // to_remove.sort();
         // to_remove.reverse();
         // for i in to_remove {
@@ -101,7 +181,7 @@ impl Universe {
             .map(|object| {
                 let object = object.lock().unwrap();
                 ObjectRenderingInfo::Object {
-                    position: object.position,
+                    position: object.pos(),
                     radius: object.radius(),
                 }
             })
@@ -123,13 +203,15 @@ impl Universe {
 
     pub fn spawn_random_object(&mut self) {
         self.spawn_object(Object {
-            position: Vec2::new(
-                rand::random_range(0.0..self.size().x),
-                rand::random_range(0.0..self.size().y),
-            ),
+            kind: ObjectKind::NotFixed {
+                pos: Vec2::new(
+                    rand::random_range(0.0..self.size().x),
+                    rand::random_range(0.0..self.size().y),
+                ),
+                remove_next: false,
+            },
             velocity: Vec2::new(rand::random_range(-0.5..0.5), rand::random_range(-0.5..0.5)),
             mass: 1.0,
-            flags: ObjectFlags::empty(),
         });
     }
 
@@ -154,7 +236,7 @@ impl Object {
         const G: f32 = 0.5;
         const FORCE_LIMIT: Vec2 = Vec2::new(100.0, 100.0);
 
-        let delta = other.position - self.position;
+        let delta = other.pos() - self.pos();
         let distance_sq = delta.x * delta.x + delta.y * delta.y;
 
         // Avoid division by zero

@@ -14,7 +14,8 @@ use tokio::{
 use crate::{
     app::tps_tracker::TpsTracker,
     math::distance,
-    universe::{Object, ObjectFlags, Universe},
+    universe::{Object, ObjectKind, Universe},
+    util::Immutable,
 };
 
 mod tps_tracker;
@@ -93,7 +94,7 @@ async fn tick_task(state: Arc<Mutex<AppState>>) {
         if state.paths_enabled {
             let mut path_positions = Vec::new();
             for obj in &state.universe.objects {
-                path_positions.push(obj.lock().unwrap().position);
+                path_positions.push(obj.lock().unwrap().pos());
             }
             state.paths.append(&mut path_positions);
         }
@@ -142,20 +143,26 @@ impl eframe::App for App {
             if ui.button("test").clicked() {
                 let universe_size = state.universe.size();
                 state.universe.spawn_object(Object {
-                    position: universe_size / 2.0,
+                    kind: if self.obj_fix {
+                        ObjectKind::Fixed {
+                            pos: Immutable::new(universe_size / 2.0),
+                        }
+                    } else {
+                        ObjectKind::NotFixed {
+                            pos: universe_size / 2.0,
+                            remove_next: false,
+                        }
+                    },
                     velocity: Vec2::ZERO,
                     mass: 5.0,
-                    flags: if self.obj_fix {
-                        ObjectFlags::FIX
-                    } else {
-                        ObjectFlags::empty()
-                    },
                 });
                 state.universe.spawn_object(Object {
-                    position: universe_size / 2.0 + Vec2::new(0.0, 20.0),
+                    kind: ObjectKind::NotFixed {
+                        pos: universe_size / 2.0 + Vec2::new(0.0, 20.0),
+                        remove_next: false,
+                    },
                     velocity: Vec2::new(self.obj_spawn_vel, 0.0),
                     mass: 1.0,
-                    flags: ObjectFlags::empty(),
                 });
             }
             let distance = {
@@ -163,8 +170,8 @@ impl eframe::App for App {
                     0.0
                 } else {
                     distance(
-                        state.universe.objects[0].lock().unwrap().position,
-                        state.universe.objects[1].lock().unwrap().position,
+                        state.universe.objects[0].lock().unwrap().pos(),
+                        state.universe.objects[1].lock().unwrap().pos(),
                     )
                 }
             };
@@ -224,10 +231,12 @@ impl eframe::App for App {
                 pos -= Vec2::new(clip_rect.min.x, clip_rect.min.y);
                 let universe_pos = pos / scale / self.view.zoom() + self.view.get_offset();
                 state.universe.spawn_object(Object {
-                    position: universe_pos,
+                    kind: ObjectKind::NotFixed {
+                        pos: universe_pos,
+                        remove_next: false,
+                    },
                     velocity: Vec2::ZERO,
                     mass: 1.0,
-                    flags: ObjectFlags::empty(),
                 });
             }
             self.view

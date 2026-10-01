@@ -2,6 +2,8 @@ use std::{f32::consts::PI, sync::Mutex};
 
 use bitflags::bitflags;
 use egui::Vec2;
+#[cfg(target_arch = "wasm32")]
+use rand::{SeedableRng, rngs::SmallRng};
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use tokio::sync::mpsc::unbounded_channel;
 
@@ -11,6 +13,8 @@ pub struct Universe {
     pub objects: Vec<std::sync::Mutex<Object>>,
     pub wrap_around_size: Vec2,
     pub drag: f32,
+    #[cfg(target_arch = "wasm32")]
+    rng: SmallRng,
 }
 
 #[derive(Copy, Clone)]
@@ -200,6 +204,7 @@ impl Universe {
         self.objects.push(Mutex::new(particle))
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn spawn_random_object(&mut self) {
         self.spawn_object(Object {
             kind: ObjectKind::NotFixed {
@@ -214,6 +219,28 @@ impl Universe {
         });
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub fn spawn_random_object(&mut self) {
+        use rand::RngExt;
+
+        let obj = Object {
+            kind: ObjectKind::NotFixed {
+                pos: Vec2::new(
+                    self.rng.random_range(0.0..self.size().x),
+                    self.rng.random_range(0.0..self.size().y),
+                ),
+                remove_next: false,
+            },
+            velocity: Vec2::new(
+                self.rng.random_range(-0.5..0.5),
+                self.rng.random_range(-0.5..0.5),
+            ),
+            mass: 1.0,
+        };
+
+        self.spawn_object(obj);
+    }
+
     pub fn clear(&mut self) {
         self.objects.clear();
     }
@@ -225,6 +252,8 @@ impl Default for Universe {
             objects: Vec::new(),
             wrap_around_size: Vec2::new(1000.0, 1000.0),
             drag: 1.0, //0.999,
+            #[cfg(target_arch = "wasm32")]
+            rng: SmallRng::seed_from_u64(1),
         }
     }
 }

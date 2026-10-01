@@ -7,7 +7,6 @@ use egui::{
 };
 use tokio::{
     sync::Mutex,
-    task::block_in_place,
     time::{MissedTickBehavior, interval},
 };
 
@@ -105,7 +104,10 @@ async fn tick_task(state: Arc<Mutex<AppState>>) {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let mut state = block_in_place(|| self.state.blocking_lock());
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut state = tokio::task::block_in_place(|| self.state.blocking_lock());
+        #[cfg(target_arch = "wasm32")]
+        let mut state = self.state.blocking_lock();
         let rendering_info = state.universe.get_rendering_info();
         Panel::left("controls-and-info").show(ui, |ui| {
             ui.label(RichText::new(format!("{} TPS", state.tps_tracker.get())));

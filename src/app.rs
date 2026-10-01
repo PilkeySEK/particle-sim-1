@@ -12,7 +12,7 @@ use tokio::{
 };
 
 use crate::{
-    app::tps_tracker::TpsTracker,
+    app::tps_tracker::{Ticks, TpsTracker},
     math::distance,
     universe::{Object, ObjectKind, Universe},
     util::Immutable,
@@ -34,13 +34,14 @@ pub struct App {
     path_color: Color32,
     obj_spawn_vel: f32,
     obj_fix: bool,
+    max_path_age: Ticks,
 }
 
 struct AppState {
     universe: Universe,
     target_tps: u64,
     tps_tracker: TpsTracker,
-    paths: Vec<Vec2>,
+    paths: Vec<(Vec2, Ticks)>,
     paths_enabled: bool,
 }
 
@@ -58,6 +59,7 @@ impl App {
             path_color: Color32::GRAY,
             obj_spawn_vel: 1.0,
             obj_fix: true,
+            max_path_age: 100,
         }
     }
 }
@@ -92,11 +94,11 @@ async fn tick_task(state: Arc<Mutex<AppState>>) {
         state.tps_tracker.tick();
 
         if state.paths_enabled {
-            let mut path_positions = Vec::new();
+            let mut paths = Vec::new();
             for obj in &state.universe.objects {
-                path_positions.push(obj.lock().unwrap().pos());
+                paths.push((obj.lock().unwrap().pos(), state.tps_tracker.total_ticks()));
             }
-            state.paths.append(&mut path_positions);
+            state.paths.append(&mut paths);
         }
     }
 }
@@ -177,6 +179,7 @@ impl eframe::App for App {
             };
             ui.label(RichText::new(distance.to_string()));
             ui.checkbox(&mut state.paths_enabled, "Paths?");
+            ui.add(Slider::new(&mut self.max_path_age, 0..=1000).clamping(SliderClamping::Never));
         });
         CentralPanel::default().show(ui, |ui| {
             let scroll_delta = ui.input(|i| i.smooth_scroll_delta());
@@ -249,7 +252,10 @@ impl eframe::App for App {
             );
 
             if state.paths_enabled {
-                for &pos in &state.paths {
+                let total_ticks = state.tps_tracker.total_ticks();
+                state.paths.retain(|&(pos, created_at)| {
+                    let age = (total_ticks - created_at).max(1);
+                    let retain = age <= self.max_path_age;
                     let circle_center = (pos - self.view.get_offset()) * scale * self.view.zoom()
                         + Vec2::new(clip_rect.min.x, clip_rect.min.y);
                     if circle_center.x < clip_rect.min.x
@@ -258,14 +264,19 @@ impl eframe::App for App {
                         || circle_center.y > largest_size.y + clip_rect.min.y
                     {
                         // Don't draw if it's not in the view
-                        continue;
+                        return retain;
                     }
+                    // https://www.desmos.com/calculator/sqtmnteyrb
+                    let age_alpha = (255.0
+                        * ((-(age as f32) + self.max_path_age as f32) / self.max_path_age as f32))
+                        as u8;
                     painter.circle_filled(
                         Pos2::new(circle_center.x, circle_center.y),
                         0.25 * scale.x * self.view.zoom(),
-                        self.path_color,
+                        self.path_color * Color32::from_rgba_unmultiplied(255, 255, 255, age_alpha),
                     );
-                }
+                    retain
+                });
             } else {
                 state.paths = Vec::new();
             }

@@ -161,7 +161,6 @@ impl Universe {
             });
         drop(to_merge_tx);
         while let Some((i, mass, velocity)) = to_merge_rx.recv().await {
-            tracing::info!("merging");
             let mut target = self.objects[i].lock().unwrap();
             target.mass += mass;
             target.velocity = target.velocity + velocity * (mass / target.mass);
